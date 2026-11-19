@@ -1,0 +1,17 @@
+[Unit]
+Description=Freelancer Agency Autonomous Daemon
+After=network.target
+
+[Service]
+Type=simple
+User=ubuntu
+WorkingDirectory=/home/ubuntu/freelancer_agency
+ExecStart=/usr/bin/python3 /home/ubuntu/freelancer_agency/run_agency.py
+Restart=always
+RestartSec=10
+EnvironmentFile=/home/ubuntu/freelancer_agency/.env.local
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
