@@ -1,0 +1,28 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "freelancer-agency"
+version = "0.1.0"
+description = "Autonomous freelancer agency discovering, filtering, scoring, and monitoring freelance opportunities."
+readme = "README.md"
+requires-python = ">=3.10"
+license = {text = "MIT"}
+authors = [
+    {name = "Freelancer Agency Core Team"}
+]
+keywords = ["freelance", "upwork", "freelancer", "mcp", "automation"]
+dependencies = []
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0.0"
+]
+
+[project.scripts]
+agency = "src.app:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["src*", "src.*"]

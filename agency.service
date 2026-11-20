@@ -4,12 +4,13 @@ After=network.target
 
 [Service]
 Type=simple
-User=ubuntu
-WorkingDirectory=/home/ubuntu/freelancer_agency
-ExecStart=/usr/bin/python3 /home/ubuntu/freelancer_agency/run_agency.py
+User=sups
+WorkingDirectory=/home/sups/Documents/Code/freelancer_agency/temp/sandbox/server-setup
+Environment="PYTHONUNBUFFERED=1"
+EnvironmentFile=/home/sups/Documents/Code/freelancer_agency/temp/sandbox/server-setup/.env.local
+ExecStart=/usr/bin/python3 /home/sups/Documents/Code/freelancer_agency/temp/sandbox/server-setup/run_agency.py
 Restart=always
 RestartSec=10
-EnvironmentFile=/home/ubuntu/freelancer_agency/.env.local
 StandardOutput=journal
 StandardError=journal
 
