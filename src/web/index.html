@@ -386,14 +386,31 @@
     <input type="text" class="search-input" id="search-input" placeholder="İlanlarda ara..." oninput="renderJobs()">
   </div>
 
+  <!-- Platform Quick Filter Pills -->
+  <div style="display: flex; gap: 6px; margin-bottom: 12px;">
+    <button class="tech-pill" id="plat-all" onclick="setPlatformFilter('all')" style="padding: 4px 10px; cursor: pointer; font-weight: 600; background: var(--surface-hover); color: var(--text);">Tümü</button>
+    <button class="tech-pill" id="plat-freelancer" onclick="setPlatformFilter('freelancer')" style="padding: 4px 10px; cursor: pointer;">Freelancer</button>
+    <button class="tech-pill" id="plat-upwork" onclick="setPlatformFilter('upwork')" style="padding: 4px 10px; cursor: pointer;">Upwork</button>
+  </div>
+
   <div class="job-list" id="job-container">
     <div class="empty-msg">İlanlar yükleniyor...</div>
   </div>
 
   <!-- Proposal Modal -->
-  <div class="modal-overlay" id="modal">
+  <div class="modal-overlay" id="modal" onclick="if(event.target===this) closeModal()">
     <div class="modal-content">
-      <div class="modal-title" id="modal-heading">Yapay Zeka Teklif Taslağı</div>
+      <div style="display: flex; justify-content: space-between; align-items: center;">
+        <div class="modal-title" id="modal-heading">Yapay Zeka Teklif Taslağı</div>
+        <button onclick="closeModal()" style="background:transparent; border:none; color:var(--text-muted); font-size:1.1rem; cursor:pointer;">✕</button>
+      </div>
+
+      <!-- Quick Instruction Refinement -->
+      <div style="display: flex; gap: 6px;">
+        <input type="text" id="custom-prompt-input" class="search-input" style="padding: 6px 10px; font-size: 0.75rem;" placeholder="Özel talimat (ör: Docker vurgula, fiyat kır...)">
+        <button class="action-btn btn-secondary" onclick="regenerateProposal()" style="flex: none; padding: 6px 12px; font-size: 0.75rem;">🔄 Yeniden Yaz</button>
+      </div>
+
       <textarea class="proposal-box" id="modal-proposal" readonly></textarea>
       <div class="modal-actions">
         <button class="action-btn btn-primary" onclick="copyProposal()" id="btn-copy">📋 Kopyala</button>
@@ -465,15 +482,45 @@
       }
     }
 
+    let allJobs = [];
+    let currentFilter = 'hot';
+    let selectedPlatform = 'all';
+    let activeProposalJobId = null;
+
+    function triggerHaptic(type = 'light') {
+      try {
+        if (tg?.HapticFeedback) {
+          if (type === 'success') tg.HapticFeedback.notificationOccurred('success');
+          else tg.HapticFeedback.impactOccurred(type);
+        }
+      } catch (e) {}
+    }
+
+    function setPlatformFilter(plat) {
+      triggerHaptic('light');
+      selectedPlatform = plat;
+      ['all', 'freelancer', 'upwork'].forEach(p => {
+        const btn = document.getElementById('plat-' + p);
+        if (btn) {
+          if (p === plat) {
+            btn.style.background = 'var(--surface-hover)';
+            btn.style.color = 'var(--text)';
+            btn.style.fontWeight = '600';
+          } else {
+            btn.style.background = 'transparent';
+            btn.style.color = 'var(--text-muted)';
+            btn.style.fontWeight = '400';
+          }
+        }
+      });
+      renderJobs();
+    }
+
     function toggleTheme() {
+      triggerHaptic('light');
       const current = document.documentElement.getAttribute('data-theme') || 'dark';
       setTheme(current === 'dark' ? 'light' : 'dark');
     }
-
-    initTheme();
-
-    let allJobs = [];
-    let currentFilter = 'hot';
 
     async function loadStats() {
       try {
@@ -500,6 +547,7 @@
     }
 
     function switchFilter(type) {
+      triggerHaptic('light');
       currentFilter = type;
       document.getElementById('tab-hot').classList.toggle('active', type === 'hot');
       document.getElementById('tab-all').classList.toggle('active', type === 'all');
@@ -509,6 +557,9 @@
     function renderJobs() {
       const q = (document.getElementById('search-input').value || '').toLowerCase();
       const filtered = allJobs.filter(j => {
+        if (selectedPlatform !== 'all' && (j.platform || '').toLowerCase() !== selectedPlatform) {
+          return false;
+        }
         const titleMatch = (j.title || '').toLowerCase().includes(q);
         const descMatch = (j.clean_summary || '').toLowerCase().includes(q);
         const tagMatch = (j.tech_stack || []).some(t => t.toLowerCase().includes(q));
@@ -551,6 +602,7 @@
     let currentDetailJobId = null;
 
     function openJobDetail(jobId) {
+      triggerHaptic('light');
       const job = allJobs.find(j => j.id === jobId);
       if (!job) return;
 
@@ -598,7 +650,9 @@
       }
     }
 
-    async function draftProposal(jobId) {
+    async function draftProposal(jobId, customInstructions = '') {
+      triggerHaptic('light');
+      activeProposalJobId = jobId;
       const modal = document.getElementById('modal');
       const textarea = document.getElementById('modal-proposal');
       modal.style.display = 'flex';
@@ -608,7 +662,7 @@
         const res = await fetch('/api/draft', {
           method: 'POST',
           headers: {'Content-Type': 'application/json'},
-          body: JSON.stringify({job_id: jobId})
+          body: JSON.stringify({job_id: jobId, instructions: customInstructions})
         });
         const data = await res.json();
         if (data.success) {
@@ -621,7 +675,15 @@
       }
     }
 
+    function regenerateProposal() {
+      if (activeProposalJobId) {
+        const inst = (document.getElementById('custom-prompt-input').value || '').trim();
+        draftProposal(activeProposalJobId, inst);
+      }
+    }
+
     function copyProposal() {
+      triggerHaptic('success');
       const textarea = document.getElementById('modal-proposal');
       navigator.clipboard.writeText(textarea.value);
       const btn = document.getElementById('btn-copy');

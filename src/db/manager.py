@@ -126,10 +126,15 @@ class DatabaseManager:
                 return True, job.id
             except sqlite3.IntegrityError:
                 row = conn.execute(
-                    "SELECT id FROM jobs WHERE id = ? OR fingerprint = ?;",
+                    "SELECT id, description FROM jobs WHERE id = ? OR fingerprint = ?;",
                     (job.id, fingerprint)
                 ).fetchone()
                 existing_id = row["id"] if row else job.id
+                if row and job.description and len(job.description) > len(row["description"] or ""):
+                    conn.execute(
+                        "UPDATE jobs SET description = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?;",
+                        (job.description, existing_id)
+                    )
                 return False, existing_id
 
     def get_job(self, job_id: str) -> Optional[Dict[str, Any]]:

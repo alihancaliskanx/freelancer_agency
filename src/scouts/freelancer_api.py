@@ -31,7 +31,7 @@ class FreelancerApiScout(BaseScout):
                 continue
 
             title = p.get("title", "").strip()
-            desc = p.get("preview_description", "").strip()
+            desc = (p.get("description") or p.get("preview_description") or "").strip()
 
             raw_type = p.get("type", "fixed").lower()
             job_type = "hourly" if raw_type == "hourly" else "fixed"
@@ -115,7 +115,7 @@ class FreelancerApiScout(BaseScout):
 
         for q in query_list:
             q_param = f"&query={urllib.parse.quote(q)}" if q else ""
-            url = f"{self.api_url}?compact=true&languages[]=en{q_param}&limit=25"
+            url = f"{self.api_url}?full_description=true&languages[]=en{q_param}&limit=25"
             req = urllib.request.Request(
                 url,
                 headers={
