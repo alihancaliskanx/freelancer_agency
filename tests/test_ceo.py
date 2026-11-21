@@ -17,7 +17,9 @@ class TestCeoOrchestratorAndMcp(unittest.TestCase):
         self.db_path = os.path.join(self.test_dir, "test_ceo.db")
         self.db = DatabaseManager(self.db_path)
         self.db.init_db()
-        self.orchestrator = CeoOrchestrator(self.db)
+        from src.watchers.status_watcher import JobStatusWatcher
+        self.watcher = JobStatusWatcher(self.db)
+        self.orchestrator = CeoOrchestrator(self.db, watcher=self.watcher)
         self.mcp = McpServer(self.orchestrator)
 
         self.sample_job = JobLead(
@@ -87,6 +89,19 @@ class TestCeoOrchestratorAndMcp(unittest.TestCase):
         self.assertIn("Test Developer", view_en)
         self.orchestrator.handle_message("/dil tr")
 
+    def test_audit_command(self):
+        # 1. In Turkish
+        audit_tr = self.orchestrator.handle_message("/audit")
+        self.assertIn("Canlı Denetim", audit_tr)
+        self.assertIn("Denetlenen İlan", audit_tr)
+
+        # 2. In English
+        self.orchestrator.handle_message("/lang en")
+        audit_en = self.orchestrator.handle_message("/audit")
+        self.assertIn("Live Audit", audit_en)
+        self.assertIn("Jobs Audited", audit_en)
+        self.orchestrator.handle_message("/dil tr")
+
     def test_handle_callback_buttons(self):
         reply = self.orchestrator.handle_callback("draft:job:sample_1")
         self.assertIn("Proposal drafted", reply)
@@ -109,6 +124,7 @@ class TestCeoOrchestratorAndMcp(unittest.TestCase):
         # Default Turkish
         status_text = self.orchestrator.handle_message("/status")
         self.assertIn("Ajans Durum Raporu", status_text)
+        self.assertIn("Son Canlı Denetim", status_text)
 
         hot_text = self.orchestrator.handle_message("/hot")
         self.assertIn("Öne Çıkan Sıcak Fırsatlar", hot_text)

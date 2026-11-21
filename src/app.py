@@ -84,11 +84,17 @@ class AgencyApplication:
         self.coordinator = ScoutCoordinator(scouts, self.filter_engine, self.db)
 
         # 4. Watchers
-        self.status_watcher = JobStatusWatcher(self.db)
+        self.status_watcher = JobStatusWatcher(self.db, scoring_engine=self.scoring_engine)
         self.watchdog = OciKeepAliveWatchdog(self.db)
 
         # 5. CEO & MCP
-        self.ceo = CeoOrchestrator(self.db, self.coordinator, self.notifier)
+        self.ceo = CeoOrchestrator(
+            db=self.db,
+            coordinator=self.coordinator,
+            notifier=self.notifier,
+            watcher=self.status_watcher,
+            scoring_engine=self.scoring_engine
+        )
         self.mcp = McpServer(self.ceo)
 
         # 6. Web Dashboard & Cloudflare Tunnel
@@ -260,15 +266,16 @@ class AgencyApplication:
                 print(f"[Scout] Error during scan cycle: {e}")
             await asyncio.sleep(interval_seconds)
 
-    async def periodic_watcher_loop(self, interval_seconds: int = 3600):
-        """Runs hourly status pruning."""
+    async def periodic_audit_loop(self, interval_seconds: int = 120):
+        """Runs continuous real-time auditing: live proposals sync, closed job pruning, and ROI recalculation."""
         while True:
             try:
                 loop = asyncio.get_event_loop()
-                res = await loop.run_in_executor(None, self.status_watcher.prune_stale_jobs)
-                print(f"[Watcher] Job status check: {res}")
+                stats = await loop.run_in_executor(None, self.status_watcher.audit_batch, self.scoring_engine, 50)
+                if stats.get("audited", 0) > 0 and (stats.get("proposals_updated", 0) > 0 or stats.get("closed", 0) > 0):
+                    print(f"[AuditWatcher] Audited {stats['audited']} jobs: {stats.get('proposals_updated', 0)} proposals updated, {stats.get('closed', 0)} closed.")
             except Exception as e:
-                print(f"[Watcher] Error: {e}")
+                print(f"[AuditWatcher] Error during audit cycle: {e}")
             await asyncio.sleep(interval_seconds)
 
     async def oci_keepalive_loop(self, interval_seconds: int = 14400):
@@ -297,7 +304,7 @@ class AgencyApplication:
             await asyncio.gather(
                 self.telegram_polling_loop(),
                 self.periodic_scout_loop(interval_seconds=3600),
-                self.periodic_watcher_loop(interval_seconds=3600),
+                self.periodic_audit_loop(interval_seconds=120),
                 self.oci_keepalive_loop(interval_seconds=14400)
             )
         finally:

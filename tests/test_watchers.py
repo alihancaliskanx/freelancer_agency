@@ -71,6 +71,61 @@ class TestWatchers(unittest.TestCase):
         row_act = self.db.get_job("job:active")
         self.assertEqual(row_act["status"], "discovered")
 
+    def test_audit_batch_freelancer_proposals_and_closures(self):
+        from src.scoring.engine import RoiScoringEngine
+        scoring = RoiScoringEngine()
+
+        fl_active = JobLead(
+            id="freelancer:1001",
+            title="Python Cloud Scraper",
+            description="Build scraper in python.",
+            job_type="fixed",
+            platform="freelancer",
+            budget=800.0,
+            proposals_count=2,
+            url="https://freelancer.com/projects/1001"
+        )
+        fl_closed = JobLead(
+            id="freelancer:1002",
+            title="PHP Maintenance",
+            description="Fix small php bugs.",
+            job_type="fixed",
+            platform="freelancer",
+            budget=300.0,
+            proposals_count=5,
+            url="https://freelancer.com/projects/1002"
+        )
+        self.db.insert_job(fl_active, FilterDecision(passed=True, reason="ok", rule_name="r"))
+        self.db.insert_job(fl_closed, FilterDecision(passed=True, reason="ok", rule_name="r"))
+        self.db.update_job_status("freelancer:1001", status="evaluated", roi_score=8.5, estimated_hours=10.0)
+        self.db.update_job_status("freelancer:1002", status="evaluated", roi_score=5.0, estimated_hours=5.0)
+
+        def mock_fl_fetcher(pids):
+            return {
+                "1001": {"status": "active", "bid_count": 35},
+                "1002": {"status": "closed", "bid_count": 12}
+            }
+
+        watcher = JobStatusWatcher(self.db, freelancer_fetcher=mock_fl_fetcher, scoring_engine=scoring)
+        stats = watcher.audit_batch(limit=10)
+
+        self.assertEqual(stats["audited"], 2)
+        self.assertEqual(stats["proposals_updated"], 1)
+        self.assertEqual(stats["closed"], 1)
+        self.assertEqual(stats["active"], 1)
+
+        # Verify job 1001 updated proposals count and recalculated ROI
+        row1 = self.db.get_job("freelancer:1001")
+        self.assertEqual(row1["proposals_count"], 35)
+        self.assertLess(row1["roi_score"], 8.5)
+
+        # Verify job 1002 marked as closed
+        row2 = self.db.get_job("freelancer:1002")
+        self.assertEqual(row2["status"], "closed")
+
+        # Verify audit settings stored
+        self.assertTrue(bool(self.db.get_setting("last_audit_time")))
+
     def test_oci_keep_alive_cycle(self):
         watchdog = OciKeepAliveWatchdog(self.db)
         res = watchdog.run_maintenance_cycle()

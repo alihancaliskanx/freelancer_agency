@@ -143,48 +143,40 @@ class CeoOrchestrator:
         self,
         db: DatabaseManager,
         coordinator: Optional[ScoutCoordinator] = None,
-        notifier: Optional[TelegramNotifier] = None
+        notifier: Optional[TelegramNotifier] = None,
+        watcher: Optional[Any] = None,
+        scoring_engine: Optional[Any] = None
     ):
         self.db = db
         self.coordinator = coordinator
         self.notifier = notifier
+        self.watcher = watcher
+        self.scoring_engine = scoring_engine
 
     def get_job_lead_from_row(self, row: Dict[str, Any]) -> JobLead:
         """Constructs standardized JobLead from a database row dictionary."""
-        keys = row.keys()
-        return JobLead(
-            id=row["id"],
-            title=row["title"],
-            description=row["description"] or "",
-            job_type=row["job_type"],
-            platform=row["platform"],
-            budget=row["budget"],
-            hourly_rate_min=row["hourly_rate_min"],
-            hourly_rate_max=row["hourly_rate_max"],
-            currency=row["currency"] if "currency" in keys and row["currency"] else "USD",
-            currency_symbol=row["currency_symbol"] if "currency_symbol" in keys and row["currency_symbol"] else "$",
-            original_budget=row["original_budget"] if "original_budget" in keys and row["original_budget"] is not None else row["budget"],
-            original_hourly_min=row["original_hourly_min"] if "original_hourly_min" in keys and row["original_hourly_min"] is not None else row["hourly_rate_min"],
-            original_hourly_max=row["original_hourly_max"] if "original_hourly_max" in keys and row["original_hourly_max"] is not None else row["hourly_rate_max"],
-            client_payment_verified=bool(row["client_payment_verified"]),
-            client_rating=row["client_rating"],
-            client_hire_rate=row["client_hire_rate"],
-            proposals_count=row["proposals_count"],
-            url=row["url"]
-        )
+        return self.db.row_to_job_lead(row)
 
     def get_status_overview(self) -> Dict[str, Any]:
         metrics = self.db.get_latest_metrics() or {}
         hot_leads = self.db.get_hot_leads(min_roi=6.0, limit=5)
         active_evaluated = self.db.get_jobs_by_status("evaluated", limit=100)
         drafted_proposals = self.db.get_jobs_by_status("proposal_drafted", limit=100)
+        last_audit = self.db.get_setting("last_audit_time")
+        last_stats_raw = self.db.get_setting("last_audit_stats")
+        try:
+            audit_stats = json.loads(last_stats_raw) if last_stats_raw else {}
+        except Exception:
+            audit_stats = {}
 
         return {
             "metrics": metrics,
             "hot_leads_count": len(hot_leads),
             "evaluated_jobs_count": len(active_evaluated),
             "proposals_pending_count": len(drafted_proposals),
-            "top_hot_leads": hot_leads
+            "top_hot_leads": hot_leads,
+            "last_audit_time": last_audit,
+            "last_audit_stats": audit_stats
         }
 
     def list_hot_opportunities(self, min_roi: float = 5.0, limit: int = 10) -> List[Dict[str, Any]]:
@@ -422,6 +414,7 @@ class CeoOrchestrator:
         if norm_msg in ("/status", "status", "durum", "📊 ajans durumu", "📊 status"):
             overview = self.get_status_overview()
             m = overview["metrics"]
+            audit_time = overview.get("last_audit_time") or "Henüz yapılmadı"
             if curr_lang == "tr":
                 return (
                     f"Ajans Durum Raporu\n"
@@ -430,9 +423,11 @@ class CeoOrchestrator:
                     f"Üretilen teklif: {m.get('proposals_generated', 0)}\n"
                     f"Token maliyeti: ${m.get('total_token_cost_usd', 0.0):.4f}\n"
                     f"Aktif fırsatlar: {overview['evaluated_jobs_count']}\n"
-                    f"Bekleyen teklifler: {overview['proposals_pending_count']}"
+                    f"Bekleyen teklifler: {overview['proposals_pending_count']}\n"
+                    f"Son Canlı Denetim: {audit_time}"
                 )
             else:
+                audit_time_en = overview.get("last_audit_time") or "Not yet run"
                 return (
                     f"Agency Status Overview\n"
                     f"Scanned today: {m.get('total_jobs_scanned', 0)}\n"
@@ -440,8 +435,31 @@ class CeoOrchestrator:
                     f"Proposals generated: {m.get('proposals_generated', 0)}\n"
                     f"Token cost: ${m.get('total_token_cost_usd', 0.0):.4f}\n"
                     f"Active leads: {overview['evaluated_jobs_count']}\n"
-                    f"Pending proposals: {overview['proposals_pending_count']}"
+                    f"Pending proposals: {overview['proposals_pending_count']}\n"
+                    f"Last Live Audit: {audit_time_en}"
                 )
+
+        # 4. Continuous Audit trigger command
+        if norm_msg in ("/audit", "audit", "/denetle", "denetle", "denetim", "🔍 denetle", "🔍 audit"):
+            if self.watcher:
+                stats = self.watcher.audit_batch(scoring_engine=self.scoring_engine, limit=50)
+                if curr_lang == "tr":
+                    return (
+                        f"🔍 *Canlı Denetim Raporu*\n\n"
+                        f"• *Denetlenen İlan:* {stats.get('audited', 0)}\n"
+                        f"• *Teklif Sayısı Güncellenen:* {stats.get('proposals_updated', 0)}\n"
+                        f"• *Kapatılan / Süresi Dolan:* {stats.get('closed', 0)}\n"
+                        f"• *Aktif Kalan İlan:* {stats.get('active', 0)}"
+                    )
+                else:
+                    return (
+                        f"🔍 *Live Audit Report*\n\n"
+                        f"• *Jobs Audited:* {stats.get('audited', 0)}\n"
+                        f"• *Proposals Count Updated:* {stats.get('proposals_updated', 0)}\n"
+                        f"• *Closed / Expired Jobs:* {stats.get('closed', 0)}\n"
+                        f"• *Active Jobs:* {stats.get('active', 0)}"
+                    )
+            return "Denetim servisi yapılandırılmamış." if curr_lang == "tr" else "Audit service not configured."
 
         # 3. Hot leads
         if norm_msg in ("/hot", "hot", "leads", "fırsatlar", "🔥 sıcak fırsatlar", "🔥 hot leads"):
@@ -533,6 +551,7 @@ class CeoOrchestrator:
                 "/listall   - Tüm aktif fırsatları sayfalı listele (/listall <sayfa>)\n"
                 "/show <id> - İlanı tüm detayları ve butonlarıyla göster\n"
                 "/scan      - Anlık piyasa tarama döngüsü başlat\n"
+                "/audit     - Canlı ilanları denetle ve teklif sayılarını tazele\n"
                 "/portfolio - Portföy ve GitHub imza ayarlarını görüntüle/değiştir\n"
                 "/dil       - Dil ayarlarını değiştir (/dil tr veya /dil en)\n"
                 "/draft <id>- Belirtilen iş için teklif taslağı üret"
@@ -546,6 +565,7 @@ class CeoOrchestrator:
                 "/listall   - View all opportunities paginated (/listall <page>)\n"
                 "/show <id> - View full job card with action buttons\n"
                 "/scan      - Trigger immediate scan cycle\n"
+                "/audit     - Audit live jobs and refresh proposal counts\n"
                 "/portfolio - View/update portfolio and GitHub signature settings\n"
                 "/lang      - Change language (/lang tr or /lang en)\n"
                 "/draft <id>- Draft proposal for job"

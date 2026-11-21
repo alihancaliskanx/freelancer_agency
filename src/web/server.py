@@ -238,6 +238,18 @@ class DashboardHandler(BaseHTTPRequestHandler):
             })
             return
 
+        # 4. API: Trigger Live Audit Cycle
+        elif path == "/api/audit":
+            if not self.orchestrator:
+                self._send_json(500, {"error": "Orchestrator not initialized"})
+                return
+            if self.orchestrator.watcher:
+                stats = self.orchestrator.watcher.audit_batch(scoring_engine=self.orchestrator.scoring_engine, limit=50)
+                self._send_json(200, {"success": True, "stats": stats})
+            else:
+                self._send_json(503, {"error": "Watcher not configured"})
+            return
+
         self._send_json(404, {"error": "Not Found"})
 
 

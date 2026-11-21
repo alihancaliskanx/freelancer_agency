@@ -84,6 +84,37 @@ class TestDatabaseManager(unittest.TestCase):
         self.assertFalse(inserted2)
         self.assertEqual(existing_id, "upwork:~01first")
 
+    def test_duplicate_insert_updates_proposals_count(self):
+        job1 = JobLead(
+            id="freelancer:dup_prop",
+            title="Python Web Automation",
+            description="Short desc",
+            job_type="fixed",
+            platform="freelancer",
+            budget=500.0,
+            proposals_count=3
+        )
+        inserted1, _ = self.db.insert_job(job1)
+        self.assertTrue(inserted1)
+
+        # Later scan discovers 25 proposals and longer description
+        job2 = JobLead(
+            id="freelancer:dup_prop",
+            title="Python Web Automation",
+            description="Much longer and detailed description of the project requirements.",
+            job_type="fixed",
+            platform="freelancer",
+            budget=500.0,
+            proposals_count=25
+        )
+        inserted2, existing_id = self.db.insert_job(job2)
+        self.assertFalse(inserted2)
+        self.assertEqual(existing_id, "freelancer:dup_prop")
+
+        row = self.db.get_job("freelancer:dup_prop")
+        self.assertEqual(row["proposals_count"], 25)
+        self.assertIn("Much longer", row["description"])
+
     def test_filtered_out_status(self):
         job = JobLead(
             id="upwork:~01drop",

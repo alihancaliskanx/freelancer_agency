@@ -126,15 +126,36 @@ class DatabaseManager:
                 return True, job.id
             except sqlite3.IntegrityError:
                 row = conn.execute(
-                    "SELECT id, description FROM jobs WHERE id = ? OR fingerprint = ?;",
+                    "SELECT id, description, proposals_count, budget, hourly_rate_min, hourly_rate_max FROM jobs WHERE id = ? OR fingerprint = ?;",
                     (job.id, fingerprint)
                 ).fetchone()
                 existing_id = row["id"] if row else job.id
-                if row and job.description and len(job.description) > len(row["description"] or ""):
-                    conn.execute(
-                        "UPDATE jobs SET description = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?;",
-                        (job.description, existing_id)
-                    )
+                if row:
+                    updates = []
+                    params_upd = []
+
+                    # 1. Update proposal count if incoming is provided and differs
+                    if job.proposals_count is not None and job.proposals_count != row["proposals_count"]:
+                        updates.append("proposals_count = ?")
+                        params_upd.append(job.proposals_count)
+
+                    # 2. Update description if incoming is longer
+                    if job.description and len(job.description) > len(row["description"] or ""):
+                        updates.append("description = ?")
+                        params_upd.append(job.description)
+
+                    # 3. Update budget if missing previously
+                    if job.budget is not None and row["budget"] is None:
+                        updates.append("budget = ?")
+                        params_upd.append(job.budget)
+
+                    if updates:
+                        updates.append("updated_at = CURRENT_TIMESTAMP")
+                        params_upd.append(existing_id)
+                        conn.execute(
+                            f"UPDATE jobs SET {', '.join(updates)} WHERE id = ?;",
+                            tuple(params_upd)
+                        )
                 return False, existing_id
 
     def get_job(self, job_id: str) -> Optional[Dict[str, Any]]:
@@ -211,6 +232,73 @@ class DatabaseManager:
         with self.get_connection() as conn:
             cursor = conn.execute(sql, tuple(params))
             return cursor.rowcount > 0
+
+    def update_job_proposals_and_score(
+        self,
+        job_id: str,
+        proposals_count: int,
+        roi_score: Optional[float] = None,
+        estimated_hours: Optional[float] = None,
+        status: Optional[str] = None
+    ) -> bool:
+        """Updates live proposal count, optional status, and recalculates ROI score."""
+        updates = ["proposals_count = ?", "updated_at = CURRENT_TIMESTAMP"]
+        params = [proposals_count]
+        if roi_score is not None:
+            updates.append("roi_score = ?")
+            params.append(roi_score)
+        if estimated_hours is not None:
+            updates.append("estimated_hours = ?")
+            params.append(estimated_hours)
+        if status is not None:
+            updates.append("status = ?")
+            params.append(status)
+        params.append(job_id)
+
+        with self.get_connection() as conn:
+            cursor = conn.execute(
+                f"UPDATE jobs SET {', '.join(updates)} WHERE id = ?;",
+                tuple(params)
+            )
+            return cursor.rowcount > 0
+
+    def get_active_jobs_for_audit(self, limit: int = 50) -> List[Dict[str, Any]]:
+        """Retrieves active evaluated jobs prioritizing those least recently audited."""
+        with self.get_connection() as conn:
+            cursor = conn.execute(
+                """
+                SELECT * FROM jobs
+                WHERE status IN ('evaluated', 'discovered')
+                ORDER BY updated_at ASC
+                LIMIT ?;
+                """,
+                (limit,)
+            )
+            return [dict(r) for r in cursor.fetchall()]
+
+    def row_to_job_lead(self, row: Dict[str, Any]) -> JobLead:
+        """Constructs standardized JobLead dataclass from a database row dictionary."""
+        keys = row.keys()
+        return JobLead(
+            id=row["id"],
+            title=row["title"],
+            description=row["description"] or "",
+            job_type=row["job_type"],
+            platform=row["platform"],
+            budget=row["budget"],
+            hourly_rate_min=row["hourly_rate_min"],
+            hourly_rate_max=row["hourly_rate_max"],
+            currency=row["currency"] if "currency" in keys and row["currency"] else "USD",
+            currency_symbol=row["currency_symbol"] if "currency_symbol" in keys and row["currency_symbol"] else "$",
+            original_budget=row["original_budget"] if "original_budget" in keys and row["original_budget"] is not None else row["budget"],
+            original_hourly_min=row["original_hourly_min"] if "original_hourly_min" in keys and row["original_hourly_min"] is not None else row["hourly_rate_min"],
+            original_hourly_max=row["original_hourly_max"] if "original_hourly_max" in keys and row["original_hourly_max"] is not None else row["hourly_rate_max"],
+            client_payment_verified=bool(row["client_payment_verified"]),
+            client_rating=row["client_rating"],
+            client_hire_rate=row["client_hire_rate"],
+            proposals_count=row["proposals_count"] if row["proposals_count"] is not None else 0,
+            url=row["url"]
+        )
 
     def create_proposal(
         self,

@@ -18,7 +18,9 @@ class TestDashboardServer(unittest.TestCase):
         self.db_path = os.path.join(self.test_dir, "test_web.db")
         self.db = DatabaseManager(self.db_path)
         self.db.init_db()
-        self.orchestrator = CeoOrchestrator(self.db)
+        from src.watchers.status_watcher import JobStatusWatcher
+        self.watcher = JobStatusWatcher(self.db)
+        self.orchestrator = CeoOrchestrator(self.db, watcher=self.watcher)
 
         # Seed sample job
         job = JobLead(
@@ -114,3 +116,12 @@ class TestDashboardServer(unittest.TestCase):
             self.assertEqual(res_data["settings"]["language"], "en")
 
         self.assertEqual(self.db.get_setting("portfolio_url"), "https://github.com/myupdatedprofile")
+
+    def test_post_api_audit(self):
+        url = f"http://127.0.0.1:{self.port}/api/audit"
+        req = urllib.request.Request(url, data=b"{}", headers={"Content-Type": "application/json"})
+        with urllib.request.urlopen(req, timeout=3) as resp:
+            self.assertEqual(resp.status, 200)
+            res_data = json.loads(resp.read().decode("utf-8"))
+            self.assertTrue(res_data["success"])
+            self.assertIn("stats", res_data)
