@@ -55,12 +55,37 @@ class TestCeoOrchestratorAndMcp(unittest.TestCase):
         self.assertTrue(res["success"])
         self.assertEqual(res["bid_amount"], 900.0)
         self.assertIn("PCI compliance", res["cover_letter"])
+        self.assertIn("github.com/alihancaliskanx", res["cover_letter"])
 
         job = self.db.get_job("job:sample_1")
         self.assertEqual(job["status"], "proposal_drafted")
 
         proposals = self.db.get_proposals_for_job("job:sample_1")
         self.assertEqual(len(proposals), 1)
+
+    def test_portfolio_and_signature_commands(self):
+        # 1. View current settings
+        view_tr = self.orchestrator.handle_message("/portfolio")
+        self.assertIn("Portföy ve İmza Ayarları", view_tr)
+        self.assertIn("github.com/alihancaliskanx", view_tr)
+
+        # 2. Update portfolio URL
+        upd_url = self.orchestrator.handle_message("/portfolio https://github.com/testdev")
+        self.assertIn("Portföy adresi güncellendi", upd_url)
+        self.assertEqual(self.db.get_setting("portfolio_url"), "https://github.com/testdev")
+
+        # 3. Update both via /imza
+        upd_both = self.orchestrator.handle_message("/imza Test Developer | https://github.com/testlead")
+        self.assertIn("İmza ve portföy güncellendi", upd_both)
+        self.assertEqual(self.db.get_setting("signature_name"), "Test Developer")
+        self.assertEqual(self.db.get_setting("portfolio_url"), "https://github.com/testlead")
+
+        # 4. In English
+        self.orchestrator.handle_message("/lang en")
+        view_en = self.orchestrator.handle_message("/portfolio")
+        self.assertIn("Portfolio & Signature Settings", view_en)
+        self.assertIn("Test Developer", view_en)
+        self.orchestrator.handle_message("/dil tr")
 
     def test_handle_callback_buttons(self):
         reply = self.orchestrator.handle_callback("draft:job:sample_1")

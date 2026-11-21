@@ -412,7 +412,8 @@ class TelegramNotifier:
             {"command": "status", "description": "📊 Ajans performans ve metrik raporu"},
             {"command": "scan", "description": "⚡ Anlık piyasa taraması başlat"},
             {"command": "show", "description": "🔍 İlan kartını detaylı görüntüle (/show <id>)"},
-            {"command": "draft", "description": "✍️ İlan için AI teklifi üret (/draft <id>)"},
+            {"command": "draft", "description": "✍️ İlan için teklif taslağı üret (/draft <id>)"},
+            {"command": "portfolio", "description": "💼 Portföy ve GitHub imza ayarları"},
             {"command": "dil", "description": "🌐 Dili değiştir (/dil tr veya /dil en)"},
             {"command": "start", "description": "🚀 Botu başlat ve yardım menüsünü gör"}
         ]
@@ -423,7 +424,8 @@ class TelegramNotifier:
             {"command": "status", "description": "📊 View agency performance metrics"},
             {"command": "scan", "description": "⚡ Trigger immediate market scan"},
             {"command": "show", "description": "🔍 Inspect full job card (/show <id>)"},
-            {"command": "draft", "description": "✍️ Generate AI proposal (/draft <id>)"},
+            {"command": "draft", "description": "✍️ Draft proposal (/draft <id>)"},
+            {"command": "portfolio", "description": "💼 Portfolio and GitHub signature settings"},
             {"command": "lang", "description": "🌐 Switch language (/lang tr or /lang en)"},
             {"command": "start", "description": "🚀 Start bot and show menu"}
         ]

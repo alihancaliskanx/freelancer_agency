@@ -135,7 +135,22 @@ class DashboardHandler(BaseHTTPRequestHandler):
             self._send_json(200, {"jobs": formatted_list, "total": len(formatted_list)})
             return
 
-        # 3. Static Web Application (index.html)
+        # 3. API: Settings (Portfolio, Signature, Language)
+        elif path == "/api/settings":
+            if not self.db:
+                self._send_json(500, {"error": "Database not initialized"})
+                return
+            p_url = self.db.get_setting("portfolio_url") or os.environ.get("AGENCY_PORTFOLIO_URL", "https://github.com/alihancaliskanx")
+            s_name = self.db.get_setting("signature_name") or os.environ.get("AGENCY_SIGNATURE_NAME", "Alihan Çalışkan")
+            lang = self.db.get_setting("language", "tr")
+            self._send_json(200, {
+                "portfolio_url": p_url,
+                "signature_name": s_name,
+                "language": lang
+            })
+            return
+
+        # 4. Static Web Application (index.html)
         elif path in ("/", "/index.html", "/app"):
             html_file = os.path.join(self.web_dir, "index.html")
             if not os.path.exists(html_file):
@@ -196,6 +211,31 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 self._send_json(200, {"success": True, "language": new_lang})
             else:
                 self._send_json(400, {"error": "Invalid language, choose 'tr' or 'en'"})
+            return
+
+        # 3. API: Update Settings (Portfolio, Signature, Language)
+        elif path == "/api/settings":
+            if not self.db:
+                self._send_json(500, {"error": "Database not initialized"})
+                return
+            if "portfolio_url" in body:
+                self.db.set_setting("portfolio_url", str(body["portfolio_url"]).strip())
+            if "signature_name" in body:
+                self.db.set_setting("signature_name", str(body["signature_name"]).strip())
+            if "language" in body and body["language"] in ("tr", "en"):
+                self.db.set_setting("language", body["language"])
+
+            p_url = self.db.get_setting("portfolio_url") or os.environ.get("AGENCY_PORTFOLIO_URL", "https://github.com/alihancaliskanx")
+            s_name = self.db.get_setting("signature_name") or os.environ.get("AGENCY_SIGNATURE_NAME", "Alihan Çalışkan")
+            lang = self.db.get_setting("language", "tr")
+            self._send_json(200, {
+                "success": True,
+                "settings": {
+                    "portfolio_url": p_url,
+                    "signature_name": s_name,
+                    "language": lang
+                }
+            })
             return
 
         self._send_json(404, {"error": "Not Found"})

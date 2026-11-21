@@ -401,7 +401,7 @@
   <div class="modal-overlay" id="modal" onclick="if(event.target===this) closeModal()">
     <div class="modal-content">
       <div style="display: flex; justify-content: space-between; align-items: center;">
-        <div class="modal-title" id="modal-heading">Yapay Zeka Teklif Taslağı</div>
+        <div class="modal-title" id="modal-heading">Teklif Taslağı</div>
         <button onclick="closeModal()" style="background:transparent; border:none; color:var(--text-muted); font-size:1.1rem; cursor:pointer;">✕</button>
       </div>
 
@@ -412,6 +412,13 @@
       </div>
 
       <textarea class="proposal-box" id="modal-proposal" readonly></textarea>
+      
+      <!-- Portfolio & Signature Meta Info -->
+      <div style="display: flex; justify-content: space-between; align-items: center; font-size: 0.73rem; color: var(--text-dim); padding: 2px 4px;">
+        <span id="proposal-sig-display">💼 İmza: Alihan Çalışkan</span>
+        <a id="proposal-portfolio-link" href="https://github.com/alihancaliskanx" target="_blank" style="color: var(--primary); text-decoration: none; font-weight: 500;">Portföy / GitHub ↗</a>
+      </div>
+
       <div class="modal-actions">
         <button class="action-btn btn-primary" onclick="copyProposal()" id="btn-copy">📋 Kopyala</button>
         <button class="action-btn btn-secondary" onclick="closeModal()">Kapat</button>
@@ -656,7 +663,7 @@
       const modal = document.getElementById('modal');
       const textarea = document.getElementById('modal-proposal');
       modal.style.display = 'flex';
-      textarea.value = 'Yapay zeka teklifi oluşturuyor, lütfen bekleyin...';
+      textarea.value = 'Teklif taslağı oluşturuluyor, lütfen bekleyin...';
 
       try {
         const res = await fetch('/api/draft', {
@@ -696,6 +703,23 @@
       document.getElementById('modal').style.display = 'none';
     }
 
+    async function loadSettings() {
+      try {
+        const res = await fetch('/api/settings');
+        const data = await res.json();
+        if (data.signature_name) {
+          const sigEl = document.getElementById('proposal-sig-display');
+          if (sigEl) sigEl.innerText = '💼 İmza: ' + data.signature_name;
+        }
+        if (data.portfolio_url) {
+          const linkEl = document.getElementById('proposal-portfolio-link');
+          if (linkEl) {
+            linkEl.href = data.portfolio_url;
+          }
+        }
+      } catch (e) {}
+    }
+
     function escapeHtml(str) {
       if (!str) return '';
       return String(str).replace(/[&<>"']/g, s => ({
@@ -705,6 +729,7 @@
 
     loadStats();
     loadJobs();
+    loadSettings();
     setInterval(loadStats, 30000);
   </script>
 </body>

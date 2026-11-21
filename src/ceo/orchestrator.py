@@ -81,7 +81,9 @@ def generate_gemini_proposal(
     description: str,
     job_type: str,
     budget_str: str,
-    custom_instructions: str = ""
+    custom_instructions: str = "",
+    portfolio_url: str = "",
+    signature_name: str = ""
 ) -> Optional[str]:
     """Generates human-like, zero-fluff proposal via Google Gemini API using Standard Library."""
     api_key = os.environ.get("GEMINI_API_KEY")
@@ -91,17 +93,27 @@ def generate_gemini_proposal(
     model = os.environ.get("GEMINI_FLASH_MODEL", "gemini-3.5-flash-lite")
     url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}"
 
+    signoff_instructions = ""
+    if signature_name or portfolio_url:
+        signoff_instructions = (
+            f"\nSign-off Requirements:\n"
+            f"- Close professionally with the sign-off.\n"
+            f"- Developer name: {signature_name if signature_name else 'Lead Engineer'}\n"
+            f"- Portfolio / GitHub reference: {portfolio_url if portfolio_url else ''}\n"
+        )
+
     prompt = f"""You are a senior freelance software agency lead. Write a short, punchy, 3-paragraph proposal for this client:
 Title: {title}
 Type/Budget: {job_type} ({budget_str})
 Description: {description}
 {f'Custom Instructions: {custom_instructions}' if custom_instructions else ''}
-
+{signoff_instructions}
 Rules:
-- No fluff, robotic pleasantries, or generic AI intros ('Dear hiring manager, I am excited to apply...').
+- No fluff, robotic pleasantries, or generic intro lines ('Dear hiring manager, I am excited to apply...').
 - Paragraph 1: Direct technical solution and how you will solve their core problem cleanly.
-- Paragraph 2: Proposed architecture, modular delivery steps, and realistic timeline.
+- Paragraph 2: Proposed architecture, modular delivery steps, and realistic timeline. Mention relevant production experience/case studies.
 - Paragraph 3: A smart technical qualification question.
+- Conclude with the developer name and portfolio link if provided above.
 """
 
     payload = {"contents": [{"parts": [{"text": prompt}]}]}
@@ -235,19 +247,37 @@ class CeoOrchestrator:
             bid_summary = f"${bid_amount:,.2f}/hr"
             timeline = "Ongoing / Flexible"
 
-        # Try Gemini LLM generation first
+        # Retrieve configured portfolio and signature
+        portfolio_url = self.db.get_setting("portfolio_url") or os.environ.get("AGENCY_PORTFOLIO_URL", "https://github.com/alihancaliskanx")
+        signature_name = self.db.get_setting("signature_name") or os.environ.get("AGENCY_SIGNATURE_NAME", "Alihan Çalışkan")
+
+        # Try Gemini generation first
         gemini_letter = generate_gemini_proposal(
             title=title,
             description=description,
             job_type=job_type,
             budget_str=bid_summary,
-            custom_instructions=custom_instructions
+            custom_instructions=custom_instructions,
+            portfolio_url=portfolio_url,
+            signature_name=signature_name
         )
 
         if gemini_letter:
             cover_letter = gemini_letter
+            if portfolio_url and portfolio_url not in cover_letter:
+                cover_letter = f"{cover_letter}\n\nPortfolio / Code: {portfolio_url}"
             token_cost = 0.00
         else:
+            sign_lines = []
+            if signature_name:
+                sign_lines.append(f"Best regards,\n{signature_name}")
+            else:
+                sign_lines.append("Best regards.")
+            if portfolio_url:
+                sign_lines.append(f"Portfolio / Code Repositories: {portfolio_url}")
+            sign_off_block = "\n".join(sign_lines)
+
+            custom_block = f"\n{custom_instructions}\n" if custom_instructions else ""
             cover_letter = (
                 f"Dear Client,\n\n"
                 f"I reviewed your project '{title}' and have the direct technical expertise "
@@ -255,10 +285,10 @@ class CeoOrchestrator:
                 f"Technical Approach:\n"
                 f"- Thorough requirement analysis and structured delivery.\n"
                 f"- Clean, modular, well-tested code following best practices.\n"
-                f"- Transparent milestones with regular async progress updates.\n\n"
-                f"{custom_instructions}\n"
+                f"- Transparent milestones with regular async progress updates.\n"
+                f"{custom_block}\n"
                 f"I look forward to discussing the next steps.\n\n"
-                f"Best regards."
+                f"{sign_off_block}"
             ).strip()
             token_cost = 0.02
 
@@ -336,7 +366,59 @@ class CeoOrchestrator:
                 f"/dil en - English"
             )
 
-        # 2. Status overview
+        # 2. Portfolio and Signature settings command
+        if norm_msg.startswith(("/portfolio", "portfolio", "/imza", "imza", "/github", "github")):
+            raw_parts = message.strip().split(maxsplit=1)
+            arg = raw_parts[1].strip() if len(raw_parts) > 1 else ""
+
+            if not arg:
+                p_url = self.db.get_setting("portfolio_url") or os.environ.get("AGENCY_PORTFOLIO_URL", "https://github.com/alihancaliskanx")
+                s_name = self.db.get_setting("signature_name") or os.environ.get("AGENCY_SIGNATURE_NAME", "Alihan Çalışkan")
+                if curr_lang == "tr":
+                    return (
+                        f"💼 *Portföy ve İmza Ayarları*\n\n"
+                        f"• *İsim:* {s_name}\n"
+                        f"• *Portföy / GitHub:* {p_url}\n\n"
+                        f"Güncellemek için:\n"
+                        f"`/portfolio https://github.com/profiliniz`\n"
+                        f"`/imza İsim Soyisim | https://github.com/profiliniz`"
+                    )
+                else:
+                    return (
+                        f"💼 *Portfolio & Signature Settings*\n\n"
+                        f"• *Name:* {s_name}\n"
+                        f"• *Portfolio / GitHub:* {p_url}\n\n"
+                        f"To update:\n"
+                        f"`/portfolio https://github.com/yourprofile`\n"
+                        f"`/imza Name Surname | https://github.com/yourprofile`"
+                    )
+
+            if "|" in arg:
+                parts = [p.strip() for p in arg.split("|", 1)]
+                new_name = parts[0]
+                new_url = parts[1]
+                if new_name:
+                    self.db.set_setting("signature_name", new_name)
+                if new_url:
+                    self.db.set_setting("portfolio_url", new_url)
+                if curr_lang == "tr":
+                    return f"✅ İmza ve portföy güncellendi:\nİsim: {new_name}\nURL: {new_url}"
+                else:
+                    return f"✅ Signature and portfolio updated:\nName: {new_name}\nURL: {new_url}"
+            elif arg.startswith("http://") or arg.startswith("https://"):
+                self.db.set_setting("portfolio_url", arg)
+                if curr_lang == "tr":
+                    return f"✅ Portföy adresi güncellendi: {arg}"
+                else:
+                    return f"✅ Portfolio URL updated: {arg}"
+            else:
+                self.db.set_setting("signature_name", arg)
+                if curr_lang == "tr":
+                    return f"✅ İmza ismi güncellendi: {arg}"
+                else:
+                    return f"✅ Signature name updated: {arg}"
+
+        # 3. Status overview
         if norm_msg in ("/status", "status", "durum", "📊 ajans durumu", "📊 status"):
             overview = self.get_status_overview()
             m = overview["metrics"]
@@ -451,8 +533,9 @@ class CeoOrchestrator:
                 "/listall   - Tüm aktif fırsatları sayfalı listele (/listall <sayfa>)\n"
                 "/show <id> - İlanı tüm detayları ve butonlarıyla göster\n"
                 "/scan      - Anlık piyasa tarama döngüsü başlat\n"
+                "/portfolio - Portföy ve GitHub imza ayarlarını görüntüle/değiştir\n"
                 "/dil       - Dil ayarlarını değiştir (/dil tr veya /dil en)\n"
-                "/draft <id>- Belirtilen iş için yapay zeka ile teklif üret"
+                "/draft <id>- Belirtilen iş için teklif taslağı üret"
             )
         else:
             return (
@@ -463,6 +546,7 @@ class CeoOrchestrator:
                 "/listall   - View all opportunities paginated (/listall <page>)\n"
                 "/show <id> - View full job card with action buttons\n"
                 "/scan      - Trigger immediate scan cycle\n"
+                "/portfolio - View/update portfolio and GitHub signature settings\n"
                 "/lang      - Change language (/lang tr or /lang en)\n"
-                "/draft <id>- Generate proposal for job"
+                "/draft <id>- Draft proposal for job"
             )

@@ -86,3 +86,31 @@ class TestDashboardServer(unittest.TestCase):
             data = json.loads(resp.read().decode("utf-8"))
             self.assertTrue(data.get("success"))
             self.assertIn("cover_letter", data)
+            self.assertIn("github.com/alihancaliskanx", data["cover_letter"])
+
+    def test_get_and_post_api_settings(self):
+        # 1. GET settings
+        url = f"http://127.0.0.1:{self.port}/api/settings"
+        with urllib.request.urlopen(url, timeout=3) as resp:
+            self.assertEqual(resp.status, 200)
+            data = json.loads(resp.read().decode("utf-8"))
+            self.assertIn("portfolio_url", data)
+            self.assertIn("signature_name", data)
+            self.assertEqual(data["language"], "tr")
+
+        # 2. POST settings update
+        payload = json.dumps({
+            "portfolio_url": "https://github.com/myupdatedprofile",
+            "signature_name": "Senior Software Architect",
+            "language": "en"
+        }).encode("utf-8")
+        req = urllib.request.Request(url, data=payload, headers={"Content-Type": "application/json"})
+        with urllib.request.urlopen(req, timeout=3) as resp:
+            self.assertEqual(resp.status, 200)
+            res_data = json.loads(resp.read().decode("utf-8"))
+            self.assertTrue(res_data["success"])
+            self.assertEqual(res_data["settings"]["portfolio_url"], "https://github.com/myupdatedprofile")
+            self.assertEqual(res_data["settings"]["signature_name"], "Senior Software Architect")
+            self.assertEqual(res_data["settings"]["language"], "en")
+
+        self.assertEqual(self.db.get_setting("portfolio_url"), "https://github.com/myupdatedprofile")
