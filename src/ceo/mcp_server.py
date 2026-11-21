@@ -42,12 +42,41 @@ class McpServer:
 
     def _tool_chat_with_ceo(self, args: Dict[str, Any]) -> Any:
         message = args.get("message", "")
-        return {"response": self.orchestrator.handle_message(message)}
+        res = self.orchestrator.handle_message(message)
+        text = res[0] if isinstance(res, tuple) else res
+        return {"response": text}
 
-    def handle_request(self, req: Dict[str, Any]) -> Dict[str, Any]:
+    def handle_request(self, req: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         req_id = req.get("id")
         method = req.get("method")
         params = req.get("params", {})
+
+        # Handle notifications (no response needed)
+        if method and method.startswith("notifications/"):
+            return None
+
+        if method == "initialize":
+            return {
+                "jsonrpc": "2.0",
+                "id": req_id,
+                "result": {
+                    "protocolVersion": "2024-11-05",
+                    "capabilities": {
+                        "tools": {}
+                    },
+                    "serverInfo": {
+                        "name": "freelancer-agency-mcp",
+                        "version": "1.0.0"
+                    }
+                }
+            }
+
+        if method == "ping":
+            return {
+                "jsonrpc": "2.0",
+                "id": req_id,
+                "result": {}
+            }
 
         if method == "tools/list":
             return {

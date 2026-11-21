@@ -74,20 +74,106 @@ class TestCeoOrchestratorAndMcp(unittest.TestCase):
         row = self.db.get_job("job:sample_2")
         self.assertEqual(row["status"], "rejected")
 
+        # In-place pagination callback
+        page_reply = self.orchestrator.handle_callback("page:listall:1")
+        self.assertIsInstance(page_reply, tuple)
+        self.assertIn("Tüm Aktif Fırsatlar", page_reply[0])
+        self.assertIn("inline_keyboard", page_reply[1])
+
     def test_handle_message_commands(self):
+        # Default Turkish
         status_text = self.orchestrator.handle_message("/status")
-        self.assertIn("Agency Status", status_text)
+        self.assertIn("Ajans Durum Raporu", status_text)
 
         hot_text = self.orchestrator.handle_message("/hot")
-        self.assertIn("Qualified Opportunities", hot_text)
+        self.assertIn("Öne Çıkan Sıcak Fırsatlar", hot_text)
+        self.assertIn("FastAPI Payment Integration", hot_text)
+        self.assertIn("Detay:", hot_text)
+
+        # List all command (returns in-place paginated tuple with inline buttons)
+        listall_res = self.orchestrator.handle_message("/listall")
+        self.assertIsInstance(listall_res, tuple)
+        listall_text, listall_kb = listall_res
+        self.assertIn("Tüm Aktif Fırsatlar", listall_text)
+        self.assertIn("FastAPI Payment Integration", listall_text)
+        self.assertIn("show", listall_text)
+        self.assertIn("inline_keyboard", listall_kb)
+
+        # Persistent reply keyboard button presses
+        btn_hot = self.orchestrator.handle_message("🔥 Sıcak Fırsatlar")
+        self.assertIn("Öne Çıkan Sıcak Fırsatlar", btn_hot)
+
+        btn_list = self.orchestrator.handle_message("📋 Tüm İlanlar")
+        self.assertIsInstance(btn_list, tuple)
+        self.assertIn("Tüm Aktif Fırsatlar", btn_list[0])
+
+        btn_status = self.orchestrator.handle_message("📊 Ajans Durumu")
+        self.assertIn("Ajans Durum Raporu", btn_status)
 
         draft_text = self.orchestrator.handle_message("draft job:sample_1")
-        self.assertIn("Proposal Drafted", draft_text)
+        self.assertIn("Teklif Hazırlandı", draft_text)
+
+        draft_slash = self.orchestrator.handle_message("/draft job:sample_1")
+        self.assertIn("Teklif Hazırlandı", draft_slash)
 
         help_text = self.orchestrator.handle_message("hello")
-        self.assertIn("Agency CEO Interface", help_text)
+        self.assertIn("Freelancer Agency CEO Arayüzü", help_text)
+
+        # Show command (Turkish)
+        show_res = self.orchestrator.handle_message("show job:sample_1")
+        self.assertIsInstance(show_res, tuple)
+        card_text, keyboard = show_res
+        self.assertIn("*Platform:* Upwork", card_text)
+        self.assertIn("*Fiyat:*", card_text)
+        self.assertIn("inline_keyboard", keyboard)
+        self.assertEqual(keyboard["inline_keyboard"][0][0]["text"], "İlanı Aç ↗")
+
+        # Slash show command
+        show_slash = self.orchestrator.handle_message("/show job:sample_1")
+        self.assertIsInstance(show_slash, tuple)
+        self.assertIn("*Platform:* Upwork", show_slash[0])
+
+        # Show without prefix
+        show_noprefix = self.orchestrator.handle_message("show sample_1")
+        self.assertIsInstance(show_noprefix, tuple)
+        self.assertIn("FastAPI Payment Integration", show_noprefix[0])
+
+        # Show non-existing
+        show_missing = self.orchestrator.handle_message("show nonexistent_99")
+        self.assertIn("İlan bulunamadı", show_missing)
+
+        # Language change to English
+        lang_reply = self.orchestrator.handle_message("/lang en")
+        self.assertIn("English", lang_reply)
+
+        status_en = self.orchestrator.handle_message("/status")
+        self.assertIn("Agency Status Overview", status_en)
+
+        # Show command (English)
+        show_en = self.orchestrator.handle_message("show job:sample_1")
+        self.assertIn("*Price:*", show_en[0])
+
+        # Switch back to Turkish
+        self.orchestrator.handle_message("/dil tr")
 
     def test_mcp_tools_list_and_call(self):
+        # 1. MCP Handshake Initialize
+        req_init = {"jsonrpc": "2.0", "id": 100, "method": "initialize", "params": {}}
+        res_init = self.mcp.handle_request(req_init)
+        self.assertEqual(res_init["result"]["serverInfo"]["name"], "freelancer-agency-mcp")
+        self.assertIn("protocolVersion", res_init["result"])
+
+        # 2. MCP Handshake Notification
+        req_notif = {"jsonrpc": "2.0", "method": "notifications/initialized"}
+        res_notif = self.mcp.handle_request(req_notif)
+        self.assertIsNone(res_notif)
+
+        # 3. MCP Ping
+        req_ping = {"jsonrpc": "2.0", "id": 101, "method": "ping"}
+        res_ping = self.mcp.handle_request(req_ping)
+        self.assertEqual(res_ping["result"], {})
+
+        # 4. Tools list
         req_list = {"jsonrpc": "2.0", "id": 1, "method": "tools/list"}
         res_list = self.mcp.handle_request(req_list)
         tools = res_list["result"]["tools"]

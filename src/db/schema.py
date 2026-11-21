@@ -16,6 +16,11 @@ CREATE TABLE IF NOT EXISTS jobs (
     budget REAL,
     hourly_rate_min REAL,
     hourly_rate_max REAL,
+    currency TEXT DEFAULT 'USD',
+    currency_symbol TEXT DEFAULT '$',
+    original_budget REAL,
+    original_hourly_min REAL,
+    original_hourly_max REAL,
     client_payment_verified INTEGER NOT NULL DEFAULT 0,
     client_rating REAL,
     client_hire_rate REAL,
@@ -62,4 +67,11 @@ CREATE TABLE IF NOT EXISTS agency_metrics (
     active_jobs_count INTEGER DEFAULT 0,
     last_heartbeat TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
+
+CREATE TABLE IF NOT EXISTS system_settings (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
 """

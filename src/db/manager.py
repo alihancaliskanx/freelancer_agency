@@ -42,6 +42,17 @@ class DatabaseManager:
         """Initializes tables and WAL mode."""
         with self.get_connection() as conn:
             conn.executescript(SCHEMA_SQL)
+            # Automatic schema migration for existing databases
+            existing = {r[1] for r in conn.execute("PRAGMA table_info(jobs)").fetchall()}
+            for col_name, col_def in [
+                ("currency", "TEXT DEFAULT 'USD'"),
+                ("currency_symbol", "TEXT DEFAULT '$'"),
+                ("original_budget", "REAL"),
+                ("original_hourly_min", "REAL"),
+                ("original_hourly_max", "REAL"),
+            ]:
+                if col_name not in existing:
+                    conn.execute(f"ALTER TABLE jobs ADD COLUMN {col_name} {col_def};")
 
     def maintenance(self):
         """Runs checkpoint on WAL and compacts database to prevent disk bloat."""
@@ -69,12 +80,14 @@ class DatabaseManager:
         INSERT INTO jobs (
             id, fingerprint, platform, external_id, title, description,
             job_type, budget, hourly_rate_min, hourly_rate_max,
+            currency, currency_symbol, original_budget, original_hourly_min, original_hourly_max,
             client_payment_verified, client_rating, client_hire_rate,
             proposals_count, url, manual_time_allowed, status,
             filter_passed, filter_reason
         ) VALUES (
             ?, ?, ?, ?, ?, ?,
             ?, ?, ?, ?,
+            ?, ?, ?, ?, ?,
             ?, ?, ?,
             ?, ?, ?, ?,
             ?, ?
@@ -91,6 +104,11 @@ class DatabaseManager:
             job.budget,
             job.hourly_rate_min,
             job.hourly_rate_max,
+            job.currency or "USD",
+            job.currency_symbol or "$",
+            job.original_budget if job.original_budget is not None else job.budget,
+            job.original_hourly_min if job.original_hourly_min is not None else job.hourly_rate_min,
+            job.original_hourly_max if job.original_hourly_max is not None else job.hourly_rate_max,
             1 if job.client_payment_verified else 0,
             job.client_rating,
             job.client_hire_rate,
@@ -117,6 +135,11 @@ class DatabaseManager:
     def get_job(self, job_id: str) -> Optional[Dict[str, Any]]:
         with self.get_connection() as conn:
             row = conn.execute("SELECT * FROM jobs WHERE id = ?;", (job_id,)).fetchone()
+            if not row and ":" not in job_id:
+                row = conn.execute(
+                    "SELECT * FROM jobs WHERE id = ? OR id = ? OR external_id = ?;",
+                    (f"freelancer:{job_id}", f"upwork:{job_id}", job_id)
+                ).fetchone()
             return dict(row) if row else None
 
     def get_jobs_by_status(self, status: str, limit: int = 50) -> List[Dict[str, Any]]:
@@ -139,6 +162,22 @@ class DatabaseManager:
                 (min_roi, limit)
             )
             return [dict(r) for r in cursor.fetchall()]
+
+    def get_all_qualified_jobs(self, limit: int = 10, offset: int = 0) -> Tuple[List[Dict[str, Any]], int]:
+        with self.get_connection() as conn:
+            total = conn.execute(
+                "SELECT count(*) FROM jobs WHERE filter_passed = 1 AND status NOT IN ('filtered_out', 'closed', 'rejected');"
+            ).fetchone()[0]
+            cursor = conn.execute(
+                """
+                SELECT * FROM jobs
+                WHERE filter_passed = 1 AND status NOT IN ('filtered_out', 'closed', 'rejected')
+                ORDER BY roi_score DESC, created_at DESC
+                LIMIT ? OFFSET ?;
+                """,
+                (limit, offset)
+            )
+            return [dict(r) for r in cursor.fetchall()], total
 
     def update_job_status(
         self,
@@ -229,3 +268,18 @@ class DatabaseManager:
         with self.get_connection() as conn:
             row = conn.execute("SELECT * FROM agency_metrics WHERE metric_date = ?;", (today,)).fetchone()
             return dict(row) if row else None
+
+    def get_setting(self, key: str, default: str = "") -> str:
+        with self.get_connection() as conn:
+            row = conn.execute("SELECT value FROM system_settings WHERE key = ?;", (key,)).fetchone()
+            return row["value"] if row else default
+
+    def set_setting(self, key: str, value: str) -> None:
+        with self.get_connection() as conn:
+            conn.execute(
+                """
+                INSERT INTO system_settings (key, value, updated_at) VALUES (?, ?, CURRENT_TIMESTAMP)
+                ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = CURRENT_TIMESTAMP;
+                """,
+                (key, value)
+            )

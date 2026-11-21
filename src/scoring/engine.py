@@ -26,8 +26,8 @@ class ScoringConfig:
         min_strong_fit_roi: float = 7.0,
         min_fit_roi: float = 4.5,
         min_marginal_roi: float = 2.5,
-        urgent_roi_threshold: float = 8.5,
-        urgent_max_proposals: int = 5,
+        urgent_roi_threshold: float = 7.0,
+        urgent_max_proposals: int = 15,
     ):
         self.target_hourly_rate = target_hourly_rate
         self.default_token_cost_usd = default_token_cost_usd
@@ -201,6 +201,7 @@ class RoiScoringEngine:
             if not row["filter_passed"]:
                 continue
 
+            keys = row.keys()
             lead = JobLead(
                 id=row["id"],
                 title=row["title"],
@@ -210,6 +211,11 @@ class RoiScoringEngine:
                 budget=row["budget"],
                 hourly_rate_min=row["hourly_rate_min"],
                 hourly_rate_max=row["hourly_rate_max"],
+                currency=row["currency"] if "currency" in keys and row["currency"] else "USD",
+                currency_symbol=row["currency_symbol"] if "currency_symbol" in keys and row["currency_symbol"] else "$",
+                original_budget=row["original_budget"] if "original_budget" in keys and row["original_budget"] is not None else row["budget"],
+                original_hourly_min=row["original_hourly_min"] if "original_hourly_min" in keys and row["original_hourly_min"] is not None else row["hourly_rate_min"],
+                original_hourly_max=row["original_hourly_max"] if "original_hourly_max" in keys and row["original_hourly_max"] is not None else row["hourly_rate_max"],
                 client_payment_verified=bool(row["client_payment_verified"]),
                 client_rating=row["client_rating"],
                 client_hire_rate=row["client_hire_rate"],
@@ -230,7 +236,7 @@ class RoiScoringEngine:
             if result.is_urgent and self.on_urgent_lead:
                 try:
                     self.on_urgent_lead(lead, result)
-                except Exception:
-                    pass
+                except Exception as e:
+                    print(f"[UrgentAlert] Notification dispatch error for {lead.id}: {e}")
 
         return evaluated_count

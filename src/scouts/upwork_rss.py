@@ -99,6 +99,11 @@ class UpworkRssScout(BaseScout):
                     budget=budget,
                     hourly_rate_min=hourly_min,
                     hourly_rate_max=hourly_max,
+                    currency="USD",
+                    currency_symbol="$",
+                    original_budget=budget,
+                    original_hourly_min=hourly_min,
+                    original_hourly_max=hourly_max,
                     client_payment_verified=payment_verified,
                     url=url,
                     raw_metadata={"country": country}

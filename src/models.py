@@ -13,6 +13,11 @@ class JobLead:
     budget: Optional[float] = None
     hourly_rate_min: Optional[float] = None
     hourly_rate_max: Optional[float] = None
+    currency: str = "USD"
+    currency_symbol: str = "$"
+    original_budget: Optional[float] = None
+    original_hourly_min: Optional[float] = None
+    original_hourly_max: Optional[float] = None
     client_payment_verified: bool = False
     client_rating: Optional[float] = None  # 0.0 to 5.0
     client_hire_rate: Optional[float] = None  # 0 to 100 percentage

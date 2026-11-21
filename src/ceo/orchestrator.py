@@ -1,12 +1,127 @@
 """CEO Orchestrator: The single conversational executive touchpoint for the user."""
 import json
+import math
+import os
 import re
-from typing import Optional, Dict, Any, List
+import urllib.request
+import urllib.error
+from typing import Optional, Dict, Any, List, Tuple, Union
 
+from src.models import JobLead
 from src.db.manager import DatabaseManager
 from src.scouts.coordinator import ScoutCoordinator
 from src.notifications.telegram import TelegramNotifier
-from src.models import JobLead
+
+
+def format_job_list_item(row: Dict[str, Any], index: int, lang: str = "tr") -> str:
+    """Formats a job opportunity into a clean, visually structured list card."""
+    job_id = row["id"]
+    short_id = job_id.split(":", 1)[-1] if ":" in job_id else job_id
+    title = row.get("title", "").strip()
+    roi = row.get("roi_score") or 0.0
+    platform = (row.get("platform") or "freelancer").capitalize()
+
+    curr = (row.get("currency") or "USD").upper()
+    sym = row.get("currency_symbol") or "$"
+    is_usd = (curr == "USD")
+
+    # Format price
+    if row.get("job_type") == "fixed":
+        orig_b = row.get("original_budget")
+        usd_b = row.get("budget")
+        if orig_b is not None and not is_usd:
+            price_str = f"{orig_b:,.0f} {sym} ({curr}) (~{usd_b:,.0f} $)" if usd_b else f"{orig_b:,.0f} {sym}"
+        elif usd_b is not None:
+            price_str = f"{usd_b:,.0f} $"
+        else:
+            price_str = "Belirtilmedi" if lang == "tr" else "Not specified"
+    else:
+        orig_min = row.get("original_hourly_min")
+        orig_max = row.get("original_hourly_max")
+        usd_min = row.get("hourly_rate_min") or 0
+        usd_max = row.get("hourly_rate_max") or 0
+        unit = "/ saat" if lang == "tr" else "/ hr"
+        if orig_min is not None and orig_max is not None and not is_usd:
+            price_str = f"{orig_min:,.0f} {sym} - {orig_max:,.0f} {sym} {unit} (~{usd_min:.0f}$-~{usd_max:.0f}$)"
+        else:
+            price_str = f"{usd_min:.0f} $ - {usd_max:.0f} $ {unit}"
+
+    verified = "Ödeme Onaylı" if row.get("client_payment_verified") else "Ödeme Doğrulanmamış"
+    if lang != "tr":
+        verified = "Payment Verified" if row.get("client_payment_verified") else "Unverified Payment"
+
+    proposals = row.get("proposals_count") or 0
+    props_str = f"{proposals} teklif" if lang == "tr" else f"{proposals} proposals"
+
+    rating_val = row.get("client_rating")
+    rating_str = f" ⭐ {rating_val:.1f}" if rating_val else ""
+
+    show_cmd = f"/show {short_id}"
+
+    if lang == "tr":
+        return (
+            f"*{index}. [{short_id}]* {title}\n"
+            f"   • *Platform:* {platform} | *ROI:* {roi:.1f}/10\n"
+            f"   • *Fiyat:* {price_str}\n"
+            f"   • *İşveren:* {verified}{rating_str} | {props_str}\n"
+            f"   • *Detay:* `{show_cmd}`"
+        )
+    else:
+        return (
+            f"*{index}. [{short_id}]* {title}\n"
+            f"   • *Platform:* {platform} | *ROI:* {roi:.1f}/10\n"
+            f"   • *Price:* {price_str}\n"
+            f"   • *Client:* {verified}{rating_str} | {props_str}\n"
+            f"   • *Details:* `{show_cmd}`"
+        )
+
+
+def generate_gemini_proposal(
+    title: str,
+    description: str,
+    job_type: str,
+    budget_str: str,
+    custom_instructions: str = ""
+) -> Optional[str]:
+    """Generates human-like, zero-fluff proposal via Google Gemini API using Standard Library."""
+    api_key = os.environ.get("GEMINI_API_KEY")
+    if not api_key:
+        return None
+
+    model = os.environ.get("GEMINI_FLASH_MODEL", "gemini-3.5-flash-lite")
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}"
+
+    prompt = f"""You are a senior freelance software agency lead. Write a short, punchy, 3-paragraph proposal for this client:
+Title: {title}
+Type/Budget: {job_type} ({budget_str})
+Description: {description}
+{f'Custom Instructions: {custom_instructions}' if custom_instructions else ''}
+
+Rules:
+- No fluff, robotic pleasantries, or generic AI intros ('Dear hiring manager, I am excited to apply...').
+- Paragraph 1: Direct technical solution and how you will solve their core problem cleanly.
+- Paragraph 2: Proposed architecture, modular delivery steps, and realistic timeline.
+- Paragraph 3: A smart technical qualification question.
+"""
+
+    payload = {"contents": [{"parts": [{"text": prompt}]}]}
+    data = json.dumps(payload).encode("utf-8")
+    req = urllib.request.Request(
+        url,
+        data=data,
+        headers={"Content-Type": "application/json", "User-Agent": "FreelancerAgency/1.0"}
+    )
+
+    try:
+        with urllib.request.urlopen(req, timeout=12.0) as resp:
+            body = json.loads(resp.read().decode("utf-8"))
+            candidates = body.get("candidates", [])
+            if candidates:
+                return candidates[0]["content"]["parts"][0]["text"].strip()
+    except Exception as e:
+        print(f"[Gemini] Proposal generation fallback triggered: {e}")
+
+    return None
 
 
 class CeoOrchestrator:
@@ -21,6 +136,30 @@ class CeoOrchestrator:
         self.db = db
         self.coordinator = coordinator
         self.notifier = notifier
+
+    def get_job_lead_from_row(self, row: Dict[str, Any]) -> JobLead:
+        """Constructs standardized JobLead from a database row dictionary."""
+        keys = row.keys()
+        return JobLead(
+            id=row["id"],
+            title=row["title"],
+            description=row["description"] or "",
+            job_type=row["job_type"],
+            platform=row["platform"],
+            budget=row["budget"],
+            hourly_rate_min=row["hourly_rate_min"],
+            hourly_rate_max=row["hourly_rate_max"],
+            currency=row["currency"] if "currency" in keys and row["currency"] else "USD",
+            currency_symbol=row["currency_symbol"] if "currency_symbol" in keys and row["currency_symbol"] else "$",
+            original_budget=row["original_budget"] if "original_budget" in keys and row["original_budget"] is not None else row["budget"],
+            original_hourly_min=row["original_hourly_min"] if "original_hourly_min" in keys and row["original_hourly_min"] is not None else row["hourly_rate_min"],
+            original_hourly_max=row["original_hourly_max"] if "original_hourly_max" in keys and row["original_hourly_max"] is not None else row["hourly_rate_max"],
+            client_payment_verified=bool(row["client_payment_verified"]),
+            client_rating=row["client_rating"],
+            client_hire_rate=row["client_hire_rate"],
+            proposals_count=row["proposals_count"],
+            url=row["url"]
+        )
 
     def get_status_overview(self) -> Dict[str, Any]:
         metrics = self.db.get_latest_metrics() or {}
@@ -39,12 +178,49 @@ class CeoOrchestrator:
     def list_hot_opportunities(self, min_roi: float = 5.0, limit: int = 10) -> List[Dict[str, Any]]:
         return self.db.get_hot_leads(min_roi=min_roi, limit=limit)
 
+    def list_all_opportunities(self, page: int = 1, limit: int = 8) -> Tuple[List[Dict[str, Any]], int, int]:
+        offset = max(0, (page - 1) * limit)
+        jobs, total = self.db.get_all_qualified_jobs(limit=limit, offset=offset)
+        total_pages = max(1, math.ceil(total / limit))
+        return jobs, total, total_pages
+
+    def get_listall_page(self, page: int = 1, lang: Optional[str] = None) -> Tuple[str, dict]:
+        """Formats a specific page of opportunities and builds in-place pagination buttons."""
+        curr_lang = lang or self.db.get_setting("language", "tr")
+        jobs, total, total_pages = self.list_all_opportunities(page=page, limit=8)
+        notifier = self.notifier or TelegramNotifier()
+
+        if not jobs:
+            msg = "Listelenecek fırsat bulunamadı." if curr_lang == "tr" else "No opportunities found."
+            return (msg, {"inline_keyboard": []})
+
+        header = (
+            f"📋 *Tüm Aktif Fırsatlar* (Sayfa {page}/{total_pages} — Toplam {total} İlan)"
+        ) if curr_lang == "tr" else (
+            f"📋 *All Active Opportunities* (Page {page}/{total_pages} — Total {total} Jobs)"
+        )
+        items = [header]
+        start_idx = (page - 1) * 8 + 1
+        for i, l in enumerate(jobs, start_idx):
+            items.append(format_job_list_item(l, i, lang=curr_lang))
+
+        footer = (
+            f"💡 _Sayfa butonlarıyla gezinebilir veya `/show <id>` ile ilanı açabilirsiniz._"
+        ) if curr_lang == "tr" else (
+            f"💡 _Navigate pages with buttons below or type `/show <id>` to inspect details._"
+        )
+        items.append(footer)
+        text = "\n\n".join(items)
+        keyboard = notifier.build_listall_keyboard(page=page, total_pages=total_pages, lang=curr_lang)
+        return (text, keyboard)
+
     def draft_proposal(self, job_id: str, custom_instructions: str = "") -> Dict[str, Any]:
         job = self.db.get_job(job_id)
         if not job:
             return {"success": False, "error": f"Job not found: {job_id}"}
 
         title = job["title"]
+        description = job["description"] or ""
         job_type = job["job_type"]
         budget = job["budget"] or 0.0
         hourly_min = job["hourly_rate_min"] or 0.0
@@ -59,29 +235,43 @@ class CeoOrchestrator:
             bid_summary = f"${bid_amount:,.2f}/hr"
             timeline = "Ongoing / Flexible"
 
-        cover_letter = (
-            f"Dear Client,\n\n"
-            f"I reviewed your project '{title}' and have the direct technical expertise "
-            f"to deliver a robust solution without unnecessary complexity.\n\n"
-            f"Technical Approach:\n"
-            f"- Thorough requirement analysis and structured delivery.\n"
-            f"- Clean, modular, well-tested code following best practices.\n"
-            f"- Transparent milestones with regular async progress updates.\n\n"
-            f"{custom_instructions}\n"
-            f"I look forward to discussing the next steps.\n\n"
-            f"Best regards."
-        ).strip()
+        # Try Gemini LLM generation first
+        gemini_letter = generate_gemini_proposal(
+            title=title,
+            description=description,
+            job_type=job_type,
+            budget_str=bid_summary,
+            custom_instructions=custom_instructions
+        )
+
+        if gemini_letter:
+            cover_letter = gemini_letter
+            token_cost = 0.00
+        else:
+            cover_letter = (
+                f"Dear Client,\n\n"
+                f"I reviewed your project '{title}' and have the direct technical expertise "
+                f"to deliver a robust solution without unnecessary complexity.\n\n"
+                f"Technical Approach:\n"
+                f"- Thorough requirement analysis and structured delivery.\n"
+                f"- Clean, modular, well-tested code following best practices.\n"
+                f"- Transparent milestones with regular async progress updates.\n\n"
+                f"{custom_instructions}\n"
+                f"I look forward to discussing the next steps.\n\n"
+                f"Best regards."
+            ).strip()
+            token_cost = 0.02
 
         prop_id = self.db.create_proposal(
             job_id=job_id,
             cover_letter=cover_letter,
             bid_amount=bid_amount,
             estimated_timeline=timeline,
-            token_cost_usd=0.02
+            token_cost_usd=token_cost
         )
 
         self.db.update_job_status(job_id, status="proposal_drafted")
-        self.db.record_metric_heartbeat(proposals_increment=1, token_cost_increment=0.02)
+        self.db.record_metric_heartbeat(proposals_increment=1, token_cost_increment=token_cost)
 
         return {
             "success": True,
@@ -106,60 +296,173 @@ class CeoOrchestrator:
             self.db.update_job_status(job_id, status="rejected")
             return f"Opportunity {job_id} dismissed."
 
+        elif callback_data.startswith("lang:"):
+            new_lang = callback_data.split("lang:", 1)[1]
+            if new_lang in ("tr", "en"):
+                self.db.set_setting("language", new_lang)
+                return "Dil Türkçe olarak ayarlandı." if new_lang == "tr" else "Language set to English."
+
+        elif callback_data.startswith("page:listall:"):
+            try:
+                page_num = int(callback_data.split("page:listall:", 1)[1])
+            except ValueError:
+                page_num = 1
+            curr_lang = self.db.get_setting("language", "tr")
+            return self.get_listall_page(page=page_num, lang=curr_lang)
+
         return "Unknown action."
 
-    def handle_message(self, message: str) -> str:
+    def handle_message(self, message: str) -> Any:
         """Processes conversational executive commands from user."""
-        msg = message.strip().lower()
+        norm_msg = message.strip().replace("İ", "i").replace("I", "ı").lower()
+        msg = norm_msg
+        curr_lang = self.db.get_setting("language", "tr")
 
-        if msg in ("/status", "status", "durum"):
-            overview = self.get_status_overview()
-            m = overview["metrics"]
+        # 1. Language settings command
+        if norm_msg.startswith(("/dil", "/lang")):
+            parts = norm_msg.split()
+            if len(parts) > 1 and parts[1].lower() in ("tr", "en"):
+                new_lang = parts[1].lower()
+                self.db.set_setting("language", new_lang)
+                if new_lang == "tr":
+                    return "Bildirim ve arayüz dili Türkçe olarak ayarlandı."
+                else:
+                    return "Notification and interface language set to English."
+            
             return (
-                f"Agency Status\n"
-                f"Scanned today: {m.get('total_jobs_scanned', 0)}\n"
-                f"Passed filter: {m.get('jobs_passed_filter', 0)}\n"
-                f"Proposals generated: {m.get('proposals_generated', 0)}\n"
-                f"Token cost: ${m.get('total_token_cost_usd', 0.0):.4f}\n"
-                f"Active leads: {overview['evaluated_jobs_count']}\n"
-                f"Pending proposals: {overview['proposals_pending_count']}"
+                f"Mevcut Dil / Current Language: {'Türkçe (tr)' if curr_lang == 'tr' else 'English (en)'}\n\n"
+                f"Dili değiştirmek için:\n"
+                f"/dil tr - Türkçe\n"
+                f"/dil en - English"
             )
 
-        if msg in ("/hot", "hot", "leads", "fırsatlar"):
+        # 2. Status overview
+        if norm_msg in ("/status", "status", "durum", "📊 ajans durumu", "📊 status"):
+            overview = self.get_status_overview()
+            m = overview["metrics"]
+            if curr_lang == "tr":
+                return (
+                    f"Ajans Durum Raporu\n"
+                    f"Bugün taranan: {m.get('total_jobs_scanned', 0)}\n"
+                    f"Filtreyi geçen: {m.get('jobs_passed_filter', 0)}\n"
+                    f"Üretilen teklif: {m.get('proposals_generated', 0)}\n"
+                    f"Token maliyeti: ${m.get('total_token_cost_usd', 0.0):.4f}\n"
+                    f"Aktif fırsatlar: {overview['evaluated_jobs_count']}\n"
+                    f"Bekleyen teklifler: {overview['proposals_pending_count']}"
+                )
+            else:
+                return (
+                    f"Agency Status Overview\n"
+                    f"Scanned today: {m.get('total_jobs_scanned', 0)}\n"
+                    f"Passed filter: {m.get('jobs_passed_filter', 0)}\n"
+                    f"Proposals generated: {m.get('proposals_generated', 0)}\n"
+                    f"Token cost: ${m.get('total_token_cost_usd', 0.0):.4f}\n"
+                    f"Active leads: {overview['evaluated_jobs_count']}\n"
+                    f"Pending proposals: {overview['proposals_pending_count']}"
+                )
+
+        # 3. Hot leads
+        if norm_msg in ("/hot", "hot", "leads", "fırsatlar", "🔥 sıcak fırsatlar", "🔥 hot leads"):
             leads = self.list_hot_opportunities(min_roi=5.0, limit=5)
             if not leads:
-                return "No hot opportunities found."
-            lines = ["Qualified Opportunities:"]
-            for l in leads:
-                rate = f"${l['budget']} fixed" if l['job_type'] == 'fixed' else f"${l['hourly_rate_min'] or 0:.0f}-${l['hourly_rate_max'] or 0:.0f}/hr"
-                lines.append(f"• [{l['id']}] {l['title']} (ROI: {l['roi_score']} | {rate})")
-            return "\n".join(lines)
+                return "Sıcak fırsat bulunamadı." if curr_lang == "tr" else "No hot opportunities found."
+            
+            header = "🔥 *Öne Çıkan Sıcak Fırsatlar (Top 5)*" if curr_lang == "tr" else "🔥 *Qualified Hot Opportunities (Top 5)*"
+            items = [header]
+            for i, l in enumerate(leads, 1):
+                items.append(format_job_list_item(l, i, lang=curr_lang))
+            
+            footer = (
+                "💡 _Detaylı kart için yanındaki `/show <id>` komutunu yazabilirsiniz._\n"
+                "📋 _Tüm fırsatları listelemek için:_ `/listall`"
+            ) if curr_lang == "tr" else (
+                "💡 _To inspect full card with buttons: `/show <id>`_\n"
+                "📋 _To list all opportunities:_ `/listall`"
+            )
+            items.append(footer)
+            return "\n\n".join(items)
 
-        if msg in ("/scan", "scan", "tara"):
+        # 4. List all opportunities (paginated with in-place buttons)
+        listall_match = re.match(r"(?:/listall|listall|/all|all|/liste|liste|/tümü|tümü|📋 tüm ilanlar|📋 all jobs|tüm ilanlar)\s*(\d*)", norm_msg)
+        if listall_match and (
+            norm_msg.startswith(("/listall", "listall", "/all", "/liste", "liste", "📋", "tüm ilanlar"))
+            or norm_msg in ("all", "tümü", "📋 tüm ilanlar", "📋 all jobs", "tüm ilanlar")
+        ):
+            page_str = listall_match.group(1).strip()
+            page = int(page_str) if page_str.isdigit() and int(page_str) > 0 else 1
+            return self.get_listall_page(page=page, lang=curr_lang)
+
+        # 5. Immediate scan
+        if norm_msg in ("/scan", "scan", "tara", "⚡ anlık tara", "⚡ scan now"):
             if self.coordinator:
                 stats = self.coordinator.run_scan()
-                return (
-                    f"Scan Completed:\n"
-                    f"Scanned: {stats['total_scanned']}\n"
-                    f"Passed: {stats['passed_filters']}\n"
-                    f"New: {stats['new_inserted']}\n"
-                    f"Duplicates: {stats['duplicates']}"
-                )
-            return "Scout coordinator not configured on this instance."
+                if curr_lang == "tr":
+                    return (
+                        f"Tarama Tamamlandı:\n"
+                        f"Taranan: {stats['total_scanned']}\n"
+                        f"Filtreyi Geçen: {stats['passed_filters']}\n"
+                        f"Yeni Eklenen: {stats['new_inserted']}\n"
+                        f"Mükerrer: {stats['duplicates']}"
+                    )
+                else:
+                    return (
+                        f"Scan Completed:\n"
+                        f"Scanned: {stats['total_scanned']}\n"
+                        f"Passed: {stats['passed_filters']}\n"
+                        f"New: {stats['new_inserted']}\n"
+                        f"Duplicates: {stats['duplicates']}"
+                    )
+            return "Tarayıcı koordinatörü yapılandırılmamış." if curr_lang == "tr" else "Scout coordinator not configured."
 
-        draft_match = re.match(r"(?:draft|teklif\s+hazırla)\s+([^\s]+)", msg)
+        # 6. Show full job card
+        show_match = re.match(r"(?:/show|show|/detay|detay|/göster|göster|/goster|goster)\s+([^\s]+)", msg)
+        if show_match:
+            job_id_input = show_match.group(1).strip()
+            row = self.db.get_job(job_id_input)
+            if not row:
+                return f"İlan bulunamadı: '{job_id_input}'" if curr_lang == "tr" else f"Job not found: '{job_id_input}'"
+
+            lead = self.get_job_lead_from_row(row)
+            roi = row.get("roi_score") or 0.0
+            hours = row.get("estimated_hours") or 10.0
+
+            notifier = self.notifier or TelegramNotifier()
+            card_text = notifier.format_urgent_lead(lead, roi, hours, lang=curr_lang)
+            keyboard = notifier.build_urgent_lead_keyboard(lead.id, job_url=lead.url, lang=curr_lang)
+            return (card_text, keyboard)
+
+        # 7. Draft proposal
+        draft_match = re.match(r"(?:/draft|draft|/teklif|teklif\s+hazırla|teklif)\s+([^\s]+)", msg)
         if draft_match:
             job_id = draft_match.group(1)
             res = self.draft_proposal(job_id)
             if res.get("success"):
-                return f"Proposal Drafted:\n\n{res['cover_letter']}"
-            return f"Error: {res.get('error')}"
+                title_prefix = "Teklif Hazırlandı:" if curr_lang == "tr" else "Proposal Drafted:"
+                return f"{title_prefix}\n\n{res['cover_letter']}"
+            return f"Hata: {res.get('error')}" if curr_lang == "tr" else f"Error: {res.get('error')}"
 
-        return (
-            "Agency CEO Interface\n\n"
-            "Commands:\n"
-            "/status - View metrics and pipeline counts\n"
-            "/hot    - View qualified opportunities\n"
-            "/scan   - Trigger immediate scan cycle\n"
-            "draft <id> - Generate proposal for job"
-        )
+        # 8. Default Help Menu
+        if curr_lang == "tr":
+            return (
+                "Freelancer Agency CEO Arayüzü\n\n"
+                "Komutlar:\n"
+                "/status    - Metrikleri ve boru hattı sayılarını görüntüle\n"
+                "/hot       - En yüksek ROI'li sıcak fırsatları listele\n"
+                "/listall   - Tüm aktif fırsatları sayfalı listele (/listall <sayfa>)\n"
+                "/show <id> - İlanı tüm detayları ve butonlarıyla göster\n"
+                "/scan      - Anlık piyasa tarama döngüsü başlat\n"
+                "/dil       - Dil ayarlarını değiştir (/dil tr veya /dil en)\n"
+                "/draft <id>- Belirtilen iş için yapay zeka ile teklif üret"
+            )
+        else:
+            return (
+                "Agency CEO Interface\n\n"
+                "Commands:\n"
+                "/status    - View metrics and pipeline counts\n"
+                "/hot       - View qualified opportunities\n"
+                "/listall   - View all opportunities paginated (/listall <page>)\n"
+                "/show <id> - View full job card with action buttons\n"
+                "/scan      - Trigger immediate scan cycle\n"
+                "/lang      - Change language (/lang tr or /lang en)\n"
+                "/draft <id>- Generate proposal for job"
+            )
