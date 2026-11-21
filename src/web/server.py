@@ -51,6 +51,12 @@ class DashboardHandler(BaseHTTPRequestHandler):
         self._send_cors_headers()
         self.end_headers()
 
+    def do_HEAD(self):
+        self.send_response(200)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self._send_cors_headers()
+        self.end_headers()
+
     def do_GET(self):
         parsed = urlparse(self.path)
         path = parsed.path
@@ -113,6 +119,10 @@ class DashboardHandler(BaseHTTPRequestHandler):
                     "estimated_hours": hours,
                     "duration_label": format_duration(hours, lang=lang),
                     "clean_summary": extract_clean_summary(desc, max_chars=180),
+                    "full_description": desc.strip(),
+                    "languages": langs,
+                    "tools": tools,
+                    "job_type_label": "Sabit Ücret" if j.get("job_type") == "fixed" else "Saatlik Ücret",
                     "tech_stack": sorted(list(set(langs + tools))),
                     "client_rating": j.get("client_rating"),
                     "client_hire_rate": j.get("client_hire_rate"),

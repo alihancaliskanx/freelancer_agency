@@ -192,7 +192,11 @@
       border-radius: 11px;
       padding: 13px;
       box-shadow: var(--card-shadow);
-      transition: border-color 0.15s, background 0.15s;
+      transition: border-color 0.15s, background 0.15s, transform 0.1s;
+      cursor: pointer;
+    }
+    .job-card:active {
+      transform: scale(0.99);
     }
     .card-meta {
       display: flex;
@@ -386,7 +390,7 @@
     <div class="empty-msg">İlanlar yükleniyor...</div>
   </div>
 
-  <!-- Modal -->
+  <!-- Proposal Modal -->
   <div class="modal-overlay" id="modal">
     <div class="modal-content">
       <div class="modal-title" id="modal-heading">Yapay Zeka Teklif Taslağı</div>
@@ -394,6 +398,42 @@
       <div class="modal-actions">
         <button class="action-btn btn-primary" onclick="copyProposal()" id="btn-copy">📋 Kopyala</button>
         <button class="action-btn btn-secondary" onclick="closeModal()">Kapat</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Detail Modal -->
+  <div class="modal-overlay" id="detail-modal" onclick="if(event.target===this) closeDetailModal()">
+    <div class="modal-content" style="max-height: 85vh; overflow-y: auto;">
+      <div style="display: flex; justify-content: space-between; align-items: center;">
+        <div style="display: flex; gap: 6px;">
+          <span class="pill" id="detail-platform">FREELANCER</span>
+          <span class="pill pill-roi" id="detail-roi">ROI: 9.0/10</span>
+        </div>
+        <button onclick="closeDetailModal()" style="background:transparent; border:none; color:var(--text-muted); font-size:1.1rem; cursor:pointer; padding:4px;">✕</button>
+      </div>
+
+      <div class="card-title" id="detail-title" style="font-size: 1.05rem; margin-top: 4px;"></div>
+      <div class="card-price" id="detail-price" style="font-size: 0.95rem;"></div>
+
+      <div style="display: flex; gap: 10px; font-size: 0.75rem; color: var(--text-dim); background: var(--bg); padding: 8px 10px; border-radius: 8px; border: 1px solid var(--border);">
+        <span id="detail-type">Sabit Ücret</span>
+        <span>•</span>
+        <span id="detail-duration">4 gün</span>
+      </div>
+
+      <div style="font-size: 0.8rem; font-weight: 600; color: var(--text); margin-top: 4px;">İlan Açıklaması ve Kapsamı:</div>
+      <div id="detail-desc" style="font-size: 0.78rem; color: var(--text-muted); line-height: 1.5; white-space: pre-wrap; background: var(--bg); padding: 10px; border-radius: 8px; border: 1px solid var(--border); max-height: 180px; overflow-y: auto;"></div>
+
+      <div style="font-size: 0.8rem; font-weight: 600; color: var(--text);">Önerilen Teknolojiler:</div>
+      <div class="tags-row" id="detail-tags"></div>
+
+      <div style="font-size: 0.8rem; font-weight: 600; color: var(--text);">İşveren Güvenilirlik Özeti:</div>
+      <div class="client-row" id="detail-client" style="border: none; padding: 0; margin-bottom: 4px;"></div>
+
+      <div class="actions-row" style="margin-top: 8px;">
+        <a class="action-btn btn-secondary" id="detail-url-btn" href="#" target="_blank">İlanı Aç ↗</a>
+        <button class="action-btn btn-primary" id="detail-draft-btn" onclick="draftFromDetail()">Teklif Hazırla ✍️</button>
       </div>
     </div>
   </div>
@@ -482,10 +522,11 @@
       }
 
       container.innerHTML = filtered.map(j => `
-        <div class="job-card">
+        <div class="job-card" onclick="openJobDetail('${j.id}')">
           <div class="card-meta">
             <span class="pill">${escapeHtml(j.platform || 'Freelancer').toUpperCase()}</span>
             <span class="pill pill-roi">ROI: ${j.roi_score}/10</span>
+            <span style="font-size: 0.68rem; color: var(--text-dim); margin-left: auto;">Detay ↗</span>
           </div>
           <div class="card-title">${escapeHtml(j.title)}</div>
           <div class="card-price">${escapeHtml(j.formatted_price)}</div>
@@ -495,16 +536,66 @@
           </div>
           <div class="client-row">
             <span>⭐ ${j.client_rating ? j.client_rating.toFixed(1) : '-'}</span>
-            <span>💼 %${j.client_hire_rate || '-'} işe alma</span>
+            <span>💼 %${j.client_hire_rate || '-'}</span>
             <span>${j.client_payment_verified ? '✅ Onaylı' : '❌ Onaysız'}</span>
             <span>📨 ${j.proposals_count} teklif</span>
           </div>
-          <div class="actions-row">
+          <div class="actions-row" onclick="event.stopPropagation()">
             ${j.url ? `<a class="action-btn btn-secondary" href="${j.url}" target="_blank">İlanı Aç ↗</a>` : ''}
             <button class="action-btn btn-primary" onclick="draftProposal('${j.id}')">Teklif Hazırla ✍️</button>
           </div>
         </div>
       `).join('');
+    }
+
+    let currentDetailJobId = null;
+
+    function openJobDetail(jobId) {
+      const job = allJobs.find(j => j.id === jobId);
+      if (!job) return;
+
+      currentDetailJobId = jobId;
+      document.getElementById('detail-platform').innerText = (job.platform || 'Freelancer').toUpperCase();
+      document.getElementById('detail-roi').innerText = `ROI: ${job.roi_score}/10`;
+      document.getElementById('detail-title').innerText = job.title;
+      document.getElementById('detail-price').innerText = job.formatted_price;
+      document.getElementById('detail-type').innerText = job.job_type_label || (job.job_type === 'fixed' ? 'Sabit Ücret' : 'Saatlik Ücret');
+      document.getElementById('detail-duration').innerText = job.duration_label || `${job.estimated_hours} saat`;
+      document.getElementById('detail-desc').innerText = job.full_description || job.clean_summary || 'Açıklama belirtilmedi.';
+
+      const tagsContainer = document.getElementById('detail-tags');
+      const tags = job.tech_stack || [];
+      tagsContainer.innerHTML = tags.length > 0 
+        ? tags.map(t => `<span class="tech-pill">${escapeHtml(t)}</span>`).join('') 
+        : '<span style="color:var(--text-dim); font-size:0.75rem;">Belirtilmedi</span>';
+
+      document.getElementById('detail-client').innerHTML = `
+        <span>⭐ Puan: ${job.client_rating ? job.client_rating.toFixed(1) + '/5.0' : '-'}</span>
+        <span>💼 İşe Alma: %${job.client_hire_rate || '-'}</span>
+        <span>${job.client_payment_verified ? '✅ Ödeme Onaylı' : '❌ Onaysız'}</span>
+        <span>📨 Teklifler: ${job.proposals_count}</span>
+      `;
+
+      const urlBtn = document.getElementById('detail-url-btn');
+      if (job.url) {
+        urlBtn.style.display = 'block';
+        urlBtn.href = job.url;
+      } else {
+        urlBtn.style.display = 'none';
+      }
+
+      document.getElementById('detail-modal').style.display = 'flex';
+    }
+
+    function closeDetailModal() {
+      document.getElementById('detail-modal').style.display = 'none';
+    }
+
+    function draftFromDetail() {
+      if (currentDetailJobId) {
+        closeDetailModal();
+        draftProposal(currentDetailJobId);
+      }
     }
 
     async function draftProposal(jobId) {
